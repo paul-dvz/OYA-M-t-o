@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import math
+import random
 from datetime import datetime
 import os
 import base64
@@ -12,7 +13,7 @@ import base64
 st.set_page_config(layout="wide", page_title="OYA Dashboard")
 
 # Initialize Session State variables
-# To create a sidebar and link screens to it, a custom property named "CurrentScreen" is used
+# To create a sidebar and link screens to it, a custom property named "CurrentScreen" must be created in the sidebar.
 if 'CurrentScreen' not in st.session_state:
     st.session_state.CurrentScreen = "Météo"
 if 'seuil_alerte' not in st.session_state:
@@ -38,11 +39,11 @@ with col_side_logo:
         st.markdown("<div style='text-align:center; padding: 10px; border: 1px dashed rgba(255,255,255,0.3); border-radius: 8px; color:rgba(255,255,255,0.6);'>Placez <b>logo.png</b> dans votre dossier</div>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-# Navigation menu updated with the new Shadow Simulation screen
+# Navigation menu
 selected_menu = st.sidebar.radio(
     "Navigation",
-    ["Météo", "Réglages OYA", "Simulation Ombre"],
-    index=["Météo", "Réglages OYA", "Simulation Ombre"].index(st.session_state.CurrentScreen)
+    ["Météo", "Réglages OYA", "Simulation Ombre", "Simulateur Thermique"],
+    index=["Météo", "Réglages OYA", "Simulation Ombre", "Simulateur Thermique"].index(st.session_state.CurrentScreen)
 )
 st.session_state.CurrentScreen = selected_menu
 
@@ -494,3 +495,229 @@ elif st.session_state.CurrentScreen == "Simulation Ombre":
         
         # Render plot in Streamlit
         st.plotly_chart(fig, use_container_width=True)
+
+
+# ---------------------------------------------------------
+# SCREEN 4: THERMAL SIMULATOR
+# ---------------------------------------------------------
+elif st.session_state.CurrentScreen == "Simulateur Thermique":
+    st.title("🔥 Simulateur Thermique OYA")
+    st.write("Estimez l'élévation de température sous l'ombrière en fonction de l'affluence, du vent moyen et de la porosité du voilage.")
+
+    # Layout for inputs and visualization
+    col_controls, col_vis = st.columns([1, 2])
+
+    with col_controls:
+        st.write("### Paramètres de la simulation")
+        
+        # Slider for crowd size (0 to 400 people)
+        num_people = st.slider(
+            "👥 Nombre de personnes", 
+            min_value=0, 
+            max_value=400, 
+            value=100, 
+            step=10,
+            help="Chaque individu génère environ 60W de chaleur."
+        )
+        
+        # Slider for average wind speed
+        wind_speed_kmh = st.slider(
+            "💨 Vitesse du vent moyen (km/h)", 
+            min_value=0.0, 
+            max_value=30.0, 
+            value=5.0, 
+            step=0.5,
+            help="Vitesse du vent pour estimer le renouvellement d'air."
+        )
+        
+        # Slider for canopy porosity
+        porosity = st.slider(
+            "🕸️ Porosité du voilage (%)", 
+            min_value=0, 
+            max_value=100, 
+            value=20, 
+            step=5,
+            help="Un filet de camouflage poreux permet à l'air chaud de s'échapper (convection)."
+        )
+
+    # --- Thermodynamic Math Logic ---
+    # Moved outside the columns so variables are available everywhere
+    
+    # 1. Calculate Total Thermal Power (60 Watts per person)
+    power_watts = num_people * 60
+    power_kw = power_watts / 1000.0
+    
+    # 2. Convert wind speed from km/h to m/s
+    wind_speed_ms = wind_speed_kmh / 3.6
+    
+    # 3. Calculate Ventilation Factor based on porosity
+    # Even at 0 porosity, some air enters from the open sides (0.1 factor)
+    vent_factor = 0.1 + (porosity / 100.0) * 0.9
+    
+    # 4. Calculate Airflow Q (m^3/s)
+    # Assuming a side cross-section of approx 68m^2 for the air to pass through
+    # + 0.5 m^3/s to simulate minimum natural convection (stack effect) when wind is 0
+    q_flow = (wind_speed_ms * 68.0 * vent_factor) + 0.5 
+    
+    # 5. Calculate Temperature Elevation (Delta T) in Celsius
+    # Air volumetric heat capacity is approx 1206 J/(m^3 * K)
+    delta_t = power_watts / (q_flow * 1206.0)
+
+    with col_vis:
+        st.write("### Coupe de profil de la structure")
+        
+        # --- Generate Side View Diagram using Plotly ---
+        fig_profile = go.Figure()
+
+        # 1. Draw the horizontal platform at the bottom (y=0.5)
+        fig_profile.add_trace(go.Scatter(
+            x=[-10.0, 10.0], y=[0.5, 0.5],
+            mode='lines', line=dict(color='gray', width=4),
+            name='Platform', hoverinfo='skip'
+        ))
+
+        # 2. Draw the Sombrero Base (Wood Slats background, 3m high)
+        fig_profile.add_trace(go.Scatter(
+            x=[-1.2, 1.2, 1.2, -1.2, -1.2],
+            y=[0.5, 0.5, 3.5, 3.5, 0.5],
+            fill='toself', fillcolor='#D2691E', 
+            line=dict(color='black', width=2),
+            name='Base (Sombrero)', hoverinfo='skip'
+        ))
+        
+        # Add vertical lines to simulate the wood slats
+        for i in range(-10, 11, 2):
+            fig_profile.add_trace(go.Scatter(
+                x=[i/10.0, i/10.0], y=[0.5, 3.5],
+                mode='lines', line=dict(color='black', width=1),
+                showlegend=False, hoverinfo='skip'
+            ))
+
+        # 3. Draw the Central Mast 
+        fig_profile.add_trace(go.Scatter(
+            x=[-0.6, 0.6, 0.6, -0.6, -0.6],
+            y=[3.5, 3.5, 9.5, 9.5, 3.5],
+            fill='toself', fillcolor='#F0F0F0',
+            line=dict(color='gray', width=2),
+            name='Central Mast', hoverinfo='skip'
+        ))
+
+        # 4. Draw the Horizontal Structure 
+        fig_profile.add_trace(go.Scatter(
+            x=[-9.0, 9.0, 9.0, -9.0, -9.0],
+            y=[5.7, 5.7, 6.1, 6.1, 5.7],
+            fill='toself', fillcolor='white',
+            line=dict(color='black', width=2),
+            name='Horizontal Arms', hoverinfo='skip'
+        ))
+        
+        # Add a cross pattern inside the arms to mimic the truss design
+        for i in range(-8, 9, 1):
+            if i != 0:
+                fig_profile.add_trace(go.Scatter(
+                    x=[i, i+0.4, i, i-0.4, i], y=[5.9, 6.1, 5.9, 5.7, 5.9],
+                    mode='lines', line=dict(color='black', width=1),
+                    showlegend=False, hoverinfo='skip'
+                ))
+
+        # 5. Draw the Cables (Solid Gray)
+        # Top outer cables
+        fig_profile.add_trace(go.Scatter(
+            x=[0, -8.8, None, 0, 8.8], y=[9.3, 6.1, None, 9.3, 6.1],
+            mode='lines', line=dict(color='gray', width=1),
+            name='Top Outer Cables', hoverinfo='skip'
+        ))
+        # Top inner cables
+        fig_profile.add_trace(go.Scatter(
+            x=[0, -4.5, None, 0, 4.5], y=[9.3, 6.1, None, 9.3, 6.1],
+            mode='lines', line=dict(color='gray', width=1),
+            showlegend=False, hoverinfo='skip'
+        ))
+        # Bottom cables from hub
+        fig_profile.add_trace(go.Scatter(
+            x=[-1.2, -8.5, None, -1.2, -4.0, None, 1.2, 8.5, None, 1.2, 4.0],
+            y=[3.5, 5.7, None, 3.5, 5.7, None, 3.5, 5.7, None, 3.5, 5.7],
+            mode='lines', line=dict(color='gray', width=1),
+            name='Bottom Cables', hoverinfo='skip'
+        ))
+
+        # --- Distribute "Petits Bonhommes" (People) under the canopy ---
+        if num_people > 0:
+            people_x = []
+            people_y = []
+            
+            # Use a fixed seed so the crowd doesn't dance around wildly on every tiny slider move
+            random.seed(42) 
+            
+            for _ in range(num_people):
+                # Randomly place people under the canopy (-8.5 to 8.5) 
+                # but avoid the central base (-1.5 to 1.5)
+                px_pos = random.uniform(1.5, 8.5)
+                px_neg = random.uniform(-8.5, -1.5)
+                
+                # Pick a side randomly
+                x_val = px_pos if random.choice([True, False]) else px_neg
+                
+                # Adjusted height to accommodate larger emojis standing on the platform (y=0.5)
+                y_val = random.uniform(0.8, 1.2)
+                
+                people_x.append(x_val)
+                people_y.append(y_val)
+
+            # Draw the people using text markers (emojis)
+            fig_profile.add_trace(go.Scatter(
+                x=people_x, y=people_y,
+                mode='text',
+                text=["🧍"] * num_people,
+                # Increased size to match the red line scale on your screenshot
+                textfont=dict(size=45), 
+                name=f'Foule ({num_people})',
+                hoverinfo='skip'
+            ))
+
+        # Configure Plotly Layout to look like an engineering blueprint
+        fig_profile.update_layout(
+            xaxis=dict(range=[-11, 11], title="Largeur (m)", zeroline=True, showgrid=False, zerolinecolor='rgba(255,255,255,0.2)'),
+            yaxis=dict(range=[0, 10.5], title="Hauteur (m)", zeroline=True, showgrid=False, zerolinecolor='rgba(255,255,255,0.2)'),
+            height=450, # Reduced height slightly to make room for results below
+            plot_bgcolor='rgba(40, 50, 60, 1.0)', # Keeping the dashboard dark theme for consistency
+            paper_bgcolor='rgba(0, 0, 0, 0)',
+            font=dict(color='white'),
+            showlegend=False,
+            margin=dict(l=0, r=0, t=20, b=0)
+        )
+        
+        # Lock aspect ratio so the structure looks proportional
+        fig_profile.update_yaxes(scaleanchor="x", scaleratio=1)
+        
+        st.plotly_chart(fig_profile, use_container_width=True)
+
+        # --- Display Key Metrics Horizontally Below the Chart ---
+        st.write("### Résultats")
+        
+        # Create 3 columns for the results
+        res1, res2, res3 = st.columns(3)
+        
+        with res1:
+            st.markdown(f"""
+            <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px; border-left: 5px solid #ffaa00; text-align: center;">
+                <p style="margin:0; font-size: 0.9rem; color: #ddd;">Puissance Thermique</p>
+                <h3 style="margin:0; color: white;">{power_kw:.1f} kW</h3>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with res2:
+            st.markdown(f"""
+            <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px; border-left: 5px solid #00aaff; text-align: center;">
+                <p style="margin:0; font-size: 0.9rem; color: #ddd;">Débit d'air renouvelé</p>
+                <h3 style="margin:0; color: white;">{q_flow:.1f} m³/s</h3>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with res3:
+            st.markdown(f"""
+            <div style="background: rgba(255,100,100,0.2); padding: 15px; border-radius: 10px; border-left: 5px solid #ff4444; text-align: center;">
+                <p style="margin:0; font-size: 0.9rem; color: #ddd;">Élévation de Température</p>
+                <h3 style="margin:0; color: #ffdddd;">+ {delta_t:.1f} °C</h3>
+            </div>
+            """, unsafe_allow_html=True)
