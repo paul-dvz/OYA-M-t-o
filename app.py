@@ -9,9 +9,13 @@ import base64
 # Configure page layout to wide and set title
 st.set_page_config(layout="wide", page_title="OYA Dashboard")
 
-# Initialize CurrentScreen property in session state
+# Initialize Session State variables
 if 'CurrentScreen' not in st.session_state:
     st.session_state.CurrentScreen = "Météo"
+if 'seuil_alerte' not in st.session_state:
+    st.session_state.seuil_alerte = 36  # Default warning threshold (10 m/s)
+if 'seuil_critique' not in st.session_state:
+    st.session_state.seuil_critique = 54  # Default critical threshold (15 m/s)
 
 # ---------------------------------------------------------
 # SIDEBAR NAVIGATION
@@ -151,7 +155,7 @@ if st.session_state.CurrentScreen == "Météo":
                     # --- INTERACTIVE DATA SECTION ---
                     st.write("### 📅 Analyse détaillée par journée")
                     
-                    # Create DataFrame from hourly API data (including humidity)
+                    # Create DataFrame from hourly API data
                     hourly = meteo_data.get('hourly', {})
                     df_hourly = pd.DataFrame({
                         'Date': pd.to_datetime(hourly.get('time')),
@@ -174,7 +178,7 @@ if st.session_state.CurrentScreen == "Météo":
                             day_fr = full_days_fr.get(day_en, day_en)
                             date_labels.append(f"{day_fr} {d.strftime('%d/%m')}")
                     
-                    # Day selector radio buttons (placed above the KPI cards to control them)
+                    # Day selector radio buttons
                     selected_label = st.radio("Afficher les données pour la journée du :", date_labels, horizontal=True)
                     selected_index = date_labels.index(selected_label)
                     target_date = unique_dates[selected_index]
@@ -185,9 +189,14 @@ if st.session_state.CurrentScreen == "Météo":
                         df_hourly_filtered = df_hourly_filtered[df_hourly_filtered['Date'] >= now.replace(minute=0, second=0, microsecond=0)]
                     df_hourly_filtered['Heure'] = df_hourly_filtered['Date'].dt.strftime('%H:%M')
 
+                    # Fetch the alert thresholds from session state
+                    seuil_alerte = st.session_state.seuil_alerte
+                    seuil_critique = st.session_state.seuil_critique
+
                     # Check for safety warnings on the selected day
                     max_wind_day = df_hourly_filtered['Rafales (km/h)'].max()
-                    wind_warning = max_wind_day > 36
+                    is_critical = max_wind_day > seuil_critique
+                    is_warning = max_wind_day > seuil_alerte and not is_critical
 
                     # Compute values for the dynamic KPI cards
                     if target_date == now.date():
@@ -205,13 +214,20 @@ if st.session_state.CurrentScreen == "Météo":
                     with m1:
                         st.markdown(f"<div class='oya-card'><h3>🌡️ Température</h3><h1>{t_val}</h1></div>", unsafe_allow_html=True)
                     with m2:
-                        warning_icon = "⚠️" if wind_warning else "💨"
+                        warning_icon = "🚨" if is_critical else ("⚠️" if is_warning else "💨")
                         st.markdown(f"<div class='oya-card'><h3>{warning_icon} Rafales</h3><h1>{w_val}</h1></div>", unsafe_allow_html=True)
                     with m3:
                         st.markdown(f"<div class='oya-card'><h3>💧 Humidité</h3><h1>{h_val}</h1></div>", unsafe_allow_html=True)
 
                     # --- HOURLY CHARTS ---
                     st.write("### 🕒 Graphiques horaires")
+
+                    # Calculate global y-axis ranges to keep scales fixed across clicks
+                    # Force wind scale to accommodate the critical threshold line
+                    global_max_wind = max(df_hourly['Rafales (km/h)'].max() + 5, seuil_critique + 10)
+                    global_min_temp = df_hourly['Température (°C)'].min() - 2
+                    global_max_temp = df_hourly['Température (°C)'].max() + 2
+                    global_max_precip = max(df_hourly['Précipitations (mm)'].max() + 0.5, 2)
                     
                     # Base Plotly layout configuration
                     layout_plotly = dict(
@@ -227,28 +243,39 @@ if st.session_state.CurrentScreen == "Météo":
                     
                     with col_g1:
                         # Display warning context if threshold is met
-                        if wind_warning:
-                            st.write("**💨 Rafales (km/h) ⚠️**")
+                        if is_critical:
+                            st.write(f"**💨 Rafales (km/h)** 🚨")
+                        elif is_warning:
+                            st.write(f"**💨 Rafales (km/h)** ⚠️")
                         else:
                             st.write("**💨 Rafales (km/h)**")
                             
                         fig_wind = px.line(df_hourly_filtered, x='Heure', y='Rafales (km/h)', template='plotly_dark')
                         fig_wind.update_layout(**layout_plotly)
-                        fig_wind.update_traces(line_color='#ff4b4b', line_width=3)
+                        fig_wind.update_yaxes(range=[0, global_max_wind])
                         
-                        # Add a safety threshold line at 36 km/h
-                        fig_wind.add_hline(y=36, line_dash="dot", line_color="rgba(255, 255, 255, 0.4)", line_width=1.5)
+                        # Changed the line color to Navy Blue (#1f77b4)
+                        fig_wind.update_traces(line_color='#1f77b4', line_width=3)
+                        
+                        # Add safety threshold lines based on dynamic settings
+                        # Warning line (Orange)
+                        fig_wind.add_hline(y=seuil_alerte, line_dash="dash", line_color="rgba(255, 165, 0, 0.6)", line_width=1.5)
+                        # Critical line (Red)
+                        fig_wind.add_hline(y=seuil_critique, line_dash="dash", line_color="rgba(255, 0, 0, 0.8)", line_width=2)
                         
                         st.plotly_chart(fig_wind, use_container_width=True, key="wind_chart")
                         
-                        # Display warning bubble below the chart
-                        if wind_warning:
-                            st.warning("⚠️ Il est recommandé de plier la structure pour sa sécurité.")
+                        # Display specific warning bubbles below the chart
+                        if is_critical:
+                            st.error("🚨 **IMPÉRATIF :** Replier la structure immédiatement ! Dommages irréversibles possibles.")
+                        elif is_warning:
+                            st.warning("⚠️ **Recommandation :** Il est conseillé de plier la structure pour sa sécurité.")
                             
                     with col_g2:
                         st.write("**🌡️ Température (°C)**")
                         fig_temp = px.line(df_hourly_filtered, x='Heure', y='Température (°C)', template='plotly_dark')
                         fig_temp.update_layout(**layout_plotly)
+                        fig_temp.update_yaxes(range=[global_min_temp, global_max_temp])
                         fig_temp.update_traces(line_color='#ffaa00', line_width=3)
                         st.plotly_chart(fig_temp, use_container_width=True, key="temp_chart")
                         
@@ -256,6 +283,7 @@ if st.session_state.CurrentScreen == "Météo":
                         st.write("**🌧️ Précipitations (mm)**")
                         fig_precip = px.bar(df_hourly_filtered, x='Heure', y='Précipitations (mm)', template='plotly_dark')
                         fig_precip.update_layout(**layout_plotly)
+                        fig_precip.update_yaxes(range=[0, global_max_precip])
                         fig_precip.update_traces(marker_color='#00aaff')
                         st.plotly_chart(fig_precip, use_container_width=True, key="precip_chart")
 
@@ -266,7 +294,6 @@ if st.session_state.CurrentScreen == "Météo":
                     daily = meteo_data.get('daily', {})
                     dates = pd.to_datetime(daily.get('time'))
                     
-                    # Build HTML string for the 7-day forecast
                     html_forecast = "<div style='background: rgba(0,0,0,0.2); padding: 20px; border-radius: 15px; width: 100%; max-width: 800px; margin: 0 auto;'>"
                     
                     for i in range(len(dates)):
@@ -299,5 +326,25 @@ if st.session_state.CurrentScreen == "Météo":
 # ---------------------------------------------------------
 elif st.session_state.CurrentScreen == "Réglages OYA":
     st.title("⚙️ Paramètres OYA")
-    max_wind = st.slider("Rafales de vent max (km/h)", 20, 80, 50)
-    st.warning(f"Repli automatique si rafales > {max_wind} km/h.")
+    
+    st.write("### 🚨 Seuils de sécurité au vent")
+    
+    # Dynamic slider for the recommendation warning threshold
+    st.session_state.seuil_alerte = st.slider(
+        "Seuil de recommandation de repli (km/h)",
+        min_value=10, 
+        max_value=100, 
+        value=st.session_state.seuil_alerte,
+        help="Au-delà de cette vitesse, il est recommandé de plier la structure pour sa sécurité (ex: 36 km/h / 10 m/s)."
+    )
+    
+    # Dynamic slider for the critical imperative threshold
+    st.session_state.seuil_critique = st.slider(
+        "Seuil critique impératif (km/h)",
+        min_value=30, 
+        max_value=150, 
+        value=st.session_state.seuil_critique,
+        help="Au-delà de cette vitesse, il est impératif de replier. Risque de dommages irréversibles (ex: 54 km/h / 15 m/s)."
+    )
+    
+    st.info(f"Paramétrage actuel : Alerte à **{st.session_state.seuil_alerte} km/h** | Critique à **{st.session_state.seuil_critique} km/h**.")
