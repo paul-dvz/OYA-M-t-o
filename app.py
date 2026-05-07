@@ -2,6 +2,8 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+import math
 from datetime import datetime
 import os
 import base64
@@ -10,6 +12,7 @@ import base64
 st.set_page_config(layout="wide", page_title="OYA Dashboard")
 
 # Initialize Session State variables
+# To create a sidebar and link screens to it, a custom property named "CurrentScreen" is used
 if 'CurrentScreen' not in st.session_state:
     st.session_state.CurrentScreen = "Météo"
 if 'seuil_alerte' not in st.session_state:
@@ -35,11 +38,11 @@ with col_side_logo:
         st.markdown("<div style='text-align:center; padding: 10px; border: 1px dashed rgba(255,255,255,0.3); border-radius: 8px; color:rgba(255,255,255,0.6);'>Placez <b>logo.png</b> dans votre dossier</div>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-# Navigation menu
+# Navigation menu updated with the new Shadow Simulation screen
 selected_menu = st.sidebar.radio(
     "Navigation",
-    ["Météo", "Réglages OYA"],
-    index=["Météo", "Réglages OYA"].index(st.session_state.CurrentScreen)
+    ["Météo", "Réglages OYA", "Simulation Ombre"],
+    index=["Météo", "Réglages OYA", "Simulation Ombre"].index(st.session_state.CurrentScreen)
 )
 st.session_state.CurrentScreen = selected_menu
 
@@ -348,3 +351,121 @@ elif st.session_state.CurrentScreen == "Réglages OYA":
     )
     
     st.info(f"Paramétrage actuel : Alerte à **{st.session_state.seuil_alerte} km/h** | Critique à **{st.session_state.seuil_critique} km/h**.")
+
+# ---------------------------------------------------------
+# SCREEN 3: SHADOW SIMULATION
+# ---------------------------------------------------------
+elif st.session_state.CurrentScreen == "Simulation Ombre":
+    st.title("☀️ Simulation d'Ombrage OYA")
+    st.write("Visualisez la projection au sol de l'ombre de la canopée (Hauteur: 5m, Rayon: 8.5m) au cours de la journée.")
+    
+    # User controls for time and season
+    col1, col2 = st.columns(2)
+    with col1:
+        heure = st.slider("Heure de la journée", min_value=8.0, max_value=20.0, value=14.0, step=0.5, format="%g h")
+    with col2:
+        saison = st.radio("Saison", ["Solstice d'été", "Solstice d'hiver"])
+    
+    # --- Simulation Math Logic ---
+    # Constant parameters of OYA structure
+    H_CANOPY = 5.0  # Height in meters
+    R_CANOPY = 8.5  # Radius of the hexagon in meters
+    
+    # Define solar parameters based on the selected season
+    # These are approximations for mid-latitudes (like France)
+    if saison == "Solstice d'été":
+        solar_noon = 14.0
+        max_elevation = 65.0
+        day_length = 16.0
+    else:
+        solar_noon = 13.0
+        max_elevation = 25.0
+        day_length = 9.0
+        
+    sunrise = solar_noon - (day_length / 2)
+    sunset = solar_noon + (day_length / 2)
+    
+    if heure <= sunrise or heure >= sunset:
+        st.info("🌙 Le soleil est couché à cette heure-ci. Aucune ombre n'est projetée.")
+    else:
+        # Calculate current solar elevation (simplified sinusoidal model)
+        time_fraction = (heure - sunrise) / day_length
+        elevation_deg = max_elevation * math.sin(time_fraction * math.pi)
+        
+        # Prevent math error (division by zero) when sun is exactly at horizon
+        elevation_deg = max(elevation_deg, 1.0)
+        elevation_rad = math.radians(elevation_deg)
+        
+        # Calculate shadow angle (Sun rises East, shadow points West)
+        # We map the day progression from West (pi) through North (pi/2) to East (0)
+        shadow_angle_rad = math.pi - (time_fraction * math.pi)
+        
+        # Calculate the length of the shadow projection vector
+        shadow_length = H_CANOPY / math.tan(elevation_rad)
+        
+        # Determine X and Y offsets for the shadow
+        offset_x = shadow_length * math.cos(shadow_angle_rad)
+        offset_y = shadow_length * math.sin(shadow_angle_rad)
+        
+        # --- Generate Polygon Coordinates ---
+        # 1. Base Hexagon (Canopy)
+        angles = [i * math.pi / 3 for i in range(7)] # 0 to 6 to close the shape
+        hexa_x = [R_CANOPY * math.cos(a) for a in angles]
+        hexa_y = [R_CANOPY * math.sin(a) for a in angles]
+        
+        # 2. Projected Hexagon (Shadow)
+        shadow_x = [x + offset_x for x in hexa_x]
+        shadow_y = [y + offset_y for y in hexa_y]
+        
+        # --- Visualization using Plotly Graph Objects ---
+        fig = go.Figure()
+        
+        # Draw the shadow (dark gray, semi-transparent)
+        fig.add_trace(go.Scatter(
+            x=shadow_x, y=shadow_y, 
+            fill='toself', fillcolor='rgba(50, 50, 50, 0.6)', 
+            line=dict(color='rgba(0,0,0,0)'),
+            name='Ombre projetée',
+            hoverinfo='skip'
+        ))
+        
+        # Draw the canopy structure (light gray, solid border)
+        fig.add_trace(go.Scatter(
+            x=hexa_x, y=hexa_y, 
+            fill='toself', fillcolor='rgba(200, 200, 200, 0.8)', 
+            line=dict(color='white', width=2),
+            name='Canopée OYA',
+            hoverinfo='skip'
+        ))
+        
+        # Add a marker for the central base of the structure
+        fig.add_trace(go.Scatter(
+            x=[0], y=[0], 
+            mode='markers', marker=dict(size=12, color='red', symbol='cross'), 
+            name='Base centrale'
+        ))
+        
+        # Calculate dynamic axis range to keep the plot square and fully visible
+        max_range = max(20, shadow_length + R_CANOPY + 2)
+        
+        fig.update_layout(
+            xaxis=dict(range=[-max_range, max_range], title="Ouest ⟷ Est (m)", zeroline=True, zerolinecolor='gray'),
+            yaxis=dict(range=[-max_range, max_range], title="Sud ⟷ Nord (m)", zeroline=True, zerolinecolor='gray'),
+            width=800, 
+            height=700,
+            plot_bgcolor='rgba(255, 255, 255, 0.1)',
+            paper_bgcolor='rgba(0, 0, 0, 0)',
+            font=dict(color='white'),
+            title=dict(
+                text=f"Élévation solaire : {elevation_deg:.1f}° | Décalage au sol de l'ombre : {shadow_length:.1f} m",
+                font=dict(size=16)
+            ),
+            showlegend=True,
+            legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+        )
+        
+        # Lock aspect ratio so 1m in X visually equals 1m in Y
+        fig.update_yaxes(scaleanchor="x", scaleratio=1)
+        
+        # Render plot in Streamlit
+        st.plotly_chart(fig, use_container_width=True)
