@@ -444,10 +444,35 @@ elif st.session_state.CurrentScreen == "Simulation Ombre":
             mode='markers', marker=dict(size=12, color='red', symbol='cross'), 
             name='Base centrale'
         ))
-        
+
+        # --- ADDED: Visualize the Sun ---
         # Calculate dynamic axis range to keep the plot square and fully visible
         max_range = max(20, shadow_length + R_CANOPY + 2)
+
+        # Place the sun far away at the edge of the visual range, opposite the shadow
+        sun_vis_dist = max_range * 0.95
+        sun_angle_rad = shadow_angle_rad + math.pi # Opposite direction
+        sun_x = sun_vis_dist * math.cos(sun_angle_rad)
+        sun_y = sun_vis_dist * math.sin(sun_angle_rad)
+
+        # Draw the Sun (Yellow marker with a glow effect)
+        # 1. Sun Glow
+        fig.add_trace(go.Scatter(
+            x=[sun_x], y=[sun_y],
+            mode='markers', marker=dict(size=25, color='rgba(255, 255, 150, 0.3)', symbol='circle'),
+            showlegend=False, hoverinfo='skip'
+        ))
+        # 2. Actual Sun Marker + Text
+        fig.add_trace(go.Scatter(
+            x=[sun_x], y=[sun_y],
+            mode='markers+text', 
+            marker=dict(size=18, color='gold', symbol='circle'), 
+            text="<b>Soleil</b> ☀️", textposition="bottom center", textfont=dict(color='gold', size=14),
+            name='Soleil',
+            hoverinfo='skip'
+        ))
         
+        # Define layout settings
         fig.update_layout(
             xaxis=dict(range=[-max_range, max_range], title="Ouest ⟷ Est (m)", zeroline=True, zerolinecolor='gray'),
             yaxis=dict(range=[-max_range, max_range], title="Sud ⟷ Nord (m)", zeroline=True, zerolinecolor='gray'),
